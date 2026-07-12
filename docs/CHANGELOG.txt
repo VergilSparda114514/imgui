@@ -160,6 +160,7 @@ Other Changes:
       to spawn multiple-thread to manage OpenGL. (#9403)
 - Examples:
   - Android: update to AGP 9.2.0 to support Gradle 9.6.0.
+  - Apple+Metal4: added new example. (#9465, #9451) [@hoffstadt]
   - OpenGL3+GLFW/SDL2/SDL3: allow Wine compatibility by passing empty GLSL version
     string to ImGui_ImplOpenGL3_Init() to let backend decide of a GLSL version based
     on actual GL version obtained. (#9427, #6577) [@perminovVS]
@@ -177,6 +178,8 @@ Docking+Viewports Branch:
   - Fixed behavior change/regression in 1.92.8 where a window using the
     ImGuiWindowFlags_AlwaysAutoResize flag would have ItemWidth default
     change when docked. (#9355, #9443) [@reybits]
+- Backends:
+  - Metal4: added multi-viewport support. (#9465, #9451) [@hoffstadt]
 
 
 -----------------------------------------------------------------------
