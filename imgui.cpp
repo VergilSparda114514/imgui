@@ -402,8 +402,10 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                             you may use GetMainViewport()->Pos to offset hard-coded positions, e.g. SetNextWindowPos(GetMainViewport()->Pos)
                           - likewise io.MousePos and GetMousePos() will use OS coordinates.
                             If you query mouse positions to interact with non-imgui coordinates you will need to offset them, e.g. subtract GetWindowViewport()->Pos.
- - 2026/08/03 (1.93.0) - Style: obsoleted `style.CurveTessellationTol (default 1.25)` which was in Pixels² unit in favor of `style.CurveTesselationMaxError` (default 1.12)` which is in Pixels unit.
-                         - style.CurveTesselationMaxError == sqrf(style.CurveTessellationTol).
+
+ - 2026/09/18 (1.93.0) - ImGuiTextFilter: removed `float width` parameter of `Draw(const char* filter, float width)`: prefer using `SetNextItemWidth(float)` which is standard. Kept inline redirection function.
+ - 2026/08/03 (1.93.0) - Style: obsoleted `style.CurveTessellationTol (default 1.25)` which was in Pixels² unit in favor of `style.CurveTessellationMaxError` (default 1.12)` which is in Pixels unit.
+                         - style.CurveTessellationMaxError == sqrf(style.CurveTessellationTol).
  - 2026/07/20 (1.92.9) - DragXXX, SliderXXX, InputScalar: with `ImGuiItemFlags_LiveEditOnInputScalar` now defaulting to being disabled:
                          inputting a value with the keyboard doesn't write intermediate values to backing variable. (#9476)
                          - Before: DragFloat() with user typing "123" --> write back 1, then 12, then 123.
@@ -1404,10 +1406,9 @@ static void             WindowSettingsHandler_ApplyAll(ImGuiContext*, ImGuiSetti
 static void             WindowSettingsHandler_WriteAll(ImGuiContext*, ImGuiSettingsHandler*, ImGuiTextBuffer* buf);
 
 // Platform Dependents default implementation for ImGuiPlatformIO functions
+static void             InitializeDefaultPlatformHandlers(ImGuiPlatformIO& platform_io);
 static const char*      Platform_GetClipboardTextFn_DefaultImpl(ImGuiContext* ctx);
 static void             Platform_SetClipboardTextFn_DefaultImpl(ImGuiContext* ctx, const char* text);
-static void             Platform_SetImeDataFn_DefaultImpl(ImGuiContext* ctx, ImGuiViewport* viewport, ImGuiPlatformImeData* data);
-static bool             Platform_OpenInShellFn_DefaultImpl(ImGuiContext* ctx, const char* path);
 
 namespace ImGui
 {
@@ -1603,7 +1604,7 @@ ImGuiStyle::ImGuiStyle()
     DockingSeparatorSize        = 2.0f;             // Thickness of resizing border between docked windows
     MouseCursorScale            = 1.0f;             // Scale software rendered mouse cursor (when io.MouseDrawCursor is enabled). May be removed later.
 
-    // Rendering & Tesselation
+    // Rendering & Tessellation
     AntiAliasedLines            = true;             // Enable anti-aliased lines/borders. Disable if you are really tight on CPU/GPU.
     AntiAliasedLinesUseTex      = true;             // Enable anti-aliased lines/borders using textures where possible. Require backend to render with bilinear filtering (NOT point/nearest filtering).
     AntiAliasedFill             = true;             // Enable anti-aliased filled shapes (rounded rectangles, circles, etc.).
@@ -3155,11 +3156,11 @@ IM_MSVC_RUNTIME_CHECKS_RESTORE
 // [SECTION] ImGuiTextFilter
 //-----------------------------------------------------------------------------
 
-// Helper: Parse and apply text filters. In format "aaaaa[,bbbb][,ccccc]"
+// Helper: Parse and apply text filters e.g. 'aaa bbb -ccc'.
 ImGuiTextFilter::ImGuiTextFilter(const char* default_filter) //-V1077
 {
     InputBuf[0] = 0;
-    CountGrep = 0;
+    _CountExclude = 0;
     if (default_filter)
     {
         ImStrncpy(InputBuf, default_filter, IM_COUNTOF(InputBuf));
@@ -3167,84 +3168,110 @@ ImGuiTextFilter::ImGuiTextFilter(const char* default_filter) //-V1077
     }
 }
 
-bool ImGuiTextFilter::Draw(const char* label, float width)
+bool ImGuiTextFilter::Draw(const char* label)
 {
-    if (width != 0.0f)
-        ImGui::SetNextItemWidth(width);
-    bool value_changed = ImGui::InputText(label, InputBuf, IM_COUNTOF(InputBuf));
+    return DrawWithHint(label, "incl -excl");
+}
+
+// Use ImGui::SetNextItemWidth() manually if you want to use this.
+bool ImGuiTextFilter::DrawWithHint(const char* label, const char* hint)
+{
+    bool value_changed = ImGui::InputTextWithHint(label, hint, InputBuf, IM_COUNTOF(InputBuf));
     if (value_changed)
         Build();
     return value_changed;
 }
 
-void ImGuiTextFilter::ImGuiTextRange::split(char separator, ImVector<ImGuiTextRange>* out) const
-{
-    out->resize(0);
-    const char* wb = b;
-    const char* we = wb;
-    while (we < e)
-    {
-        if (*we == separator)
-        {
-            out->push_back(ImGuiTextRange(wb, we));
-            wb = we + 1;
-        }
-        we++;
-    }
-    if (wb != we)
-        out->push_back(ImGuiTextRange(wb, we));
-}
-
+// Parse filter and split into a format optimal for PassFilter()
 void ImGuiTextFilter::Build()
 {
-    Filters.resize(0);
-    ImGuiTextRange input_range(InputBuf, InputBuf + ImStrlen(InputBuf));
-    input_range.split(',', &Filters);
+    _Items.resize(0);
+    _CountExclude = 0;
 
-    CountGrep = 0;
-    for (ImGuiTextRange& f : Filters)
+    const char* buf_e = InputBuf + ImStrlen(InputBuf);
+    const char* word_e;
+    int seq_incl_start_idx = -1;
+    for (const char* word_b = InputBuf; word_b < buf_e; word_b = word_e + 1)
     {
-        while (f.b < f.e && ImCharIsBlankA(f.b[0]))
-            f.b++;
-        while (f.e > f.b && ImCharIsBlankA(f.e[-1]))
-            f.e--;
-        if (f.empty())
-            continue;
-        if (f.b[0] != '-')
-            CountGrep += 1;
-    }
-}
-
-bool ImGuiTextFilter::PassFilter(const char* text, const char* text_end) const
-{
-    if (Filters.Size == 0)
-        return true;
-
-    if (text == NULL)
-        text = text_end = "";
-
-    for (const ImGuiTextRange& f : Filters)
-    {
-        if (f.b == f.e)
-            continue;
-        if (f.b[0] == '-')
+        // Trim blanks
+        while (word_b < buf_e && ImCharIsBlankA(word_b[0])) // FIXME: UTF-8 support
+            word_b++;
+        const bool is_excl = (word_b < buf_e && word_b[0] == '-');
+        if (is_excl)
+            word_b++;
+        const bool is_quote = (word_b < buf_e && word_b[0] == '\"');
+        if (is_quote)
         {
-            // Subtract
-            if (ImStristr(text, text_end, f.b + 1, f.e) != NULL)
-                return false;
+            // Parsing quotes. Omit storing leading/trailing quotes.
+            word_e = ImStrchrRange(++word_b, buf_e, '\"');
+            if (word_e == NULL)
+                word_e = buf_e;
         }
         else
         {
-            // Grep
-            if (ImStristr(text, text_end, f.b, f.e) != NULL)
-                return true;
+            // Handle both ' ' and ',' separators.
+            for (word_e = word_b; word_e < buf_e; word_e++)
+                if (*word_e == ' ' || *word_e == ',')
+                    break;
         }
+
+        // Min length
+        if (word_e - word_b > 0)
+        {
+            // Add to list. The '-' is not stored in items but implicitly inferred using (n < CountExclude).
+            // FIXME-OPT: as items are derived from user input buffer and we expect the insert() to behave sanely.
+            if (is_excl)
+            {
+                _Items.insert(_Items.Data + _CountExclude, ImGuiTextFilterItem(word_b, word_e));
+                _CountExclude++;
+                if (seq_incl_start_idx != -1)
+                    seq_incl_start_idx++;
+            }
+            else
+            {
+                if (seq_incl_start_idx == -1)
+                    seq_incl_start_idx = _Items.Size;
+                _Items.insert(_Items.Data + _Items.Size, ImGuiTextFilterItem(word_b, word_e));
+                _Items.Data[seq_incl_start_idx].CountInclude++;
+            }
+        }
+
+        // Next sequence
+        if (word_e[0] == ',')
+            seq_incl_start_idx = -1;
     }
+}
 
-    // Implicit * grep
-    if (CountGrep == 0)
+// FIXME: Could use a specialized ImStristr() + pre-convert our filter to uppercase.
+bool ImGuiTextFilter::PassFilter(const char* text, const char* text_end) const
+{
+    if (_Items.Size == 0)
         return true;
+    if (text == NULL)
+        text = text_end = "";
 
+    // Filters are sorted so that '-' ones are always leading.
+    ImGuiTextFilterItem* seq = _Items.Data;
+    ImGuiTextFilterItem* seq_excl_end = _Items.Data + _CountExclude;
+    for (; seq < seq_excl_end; seq++)
+        if (ImStristr(text, text_end, seq->Begin, seq->Begin + seq->Len) != NULL)
+            return false;
+
+    // Process includes
+    ImGuiTextFilterItem* seq_incl_end = _Items.Data + _Items.Size;
+    if (seq == seq_incl_end) // When no inclusion are specified (only exclusions) we implicitly pass
+        return true;
+    while (seq < seq_incl_end)
+    {
+        ImGuiTextFilterItem* seq_next = seq + seq->CountInclude;
+        IM_ASSERT_PARANOID(seq->CountInclude > 0 && seq_next <= seq_incl_end);
+        for (; seq < seq_next; seq++)
+            if (ImStristr(text, text_end, seq->Begin, seq->Begin + seq->Len) == NULL)
+                break;
+        if (seq == seq_next) // All matched
+            return true;
+        seq = seq_next; // Try next
+    }
     return false;
 }
 
@@ -4019,6 +4046,7 @@ void ImGui::RenderTextWrapped(ImVec2 pos, const char* text, const char* text_end
 // Effectively as this is called from widget doing their own coarse clipping it's not very valuable presently. Next time function will take
 // better advantage of the render function taking size into account for coarse clipping.
 void ImGui::RenderTextClippedEx(ImDrawList* draw_list, const ImVec2& pos_min, const ImVec2& pos_max, const char* text, const char* text_display_end, const ImVec2* text_size_if_known, const ImVec2& align, const ImRect* clip_rect)
+// DOES NOT CALL LogRenderedText(), unlike RenderTextClipped!!!
 {
     // Perform CPU side clipping for single clipped element to avoid using scissor state
     ImVec2 pos = pos_min;
@@ -4420,7 +4448,7 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
 
     NavJustMovedFromFocusScopeId = NavJustMovedToId = NavJustMovedToFocusScopeId = 0;
     NavJustMovedToKeyMods = ImGuiMod_None;
-    NavJustMovedToIsTabbing = false;
+    NavJustMovedToIsTabbing = NavJustMovedToIsInit = false;
     NavJustMovedToHasSelectionData = false;
 
     // All platforms use Ctrl+Tab but Ctrl<>Super are swapped on Mac...
@@ -4464,6 +4492,7 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
     MouseCursor = ImGuiMouseCursor_Arrow;
     MouseStationaryTimer = 0.0f;
 
+    MixedValueLabel = "-";
     InputTextPasswordFontBackupFlags = ImFontFlags_None;
     InputTextReactivateId = 0;
     TempInputId = 0;
@@ -4572,10 +4601,7 @@ void ImGui::Initialize()
     LocalizeRegisterEntries(GLocalizationEntriesEnUS, IM_COUNTOF(GLocalizationEntriesEnUS));
 
     // Setup default ImGuiPlatformIO clipboard/IME handlers.
-    g.PlatformIO.Platform_GetClipboardTextFn = Platform_GetClipboardTextFn_DefaultImpl;    // Platform dependent default implementations
-    g.PlatformIO.Platform_SetClipboardTextFn = Platform_SetClipboardTextFn_DefaultImpl;
-    g.PlatformIO.Platform_OpenInShellFn = Platform_OpenInShellFn_DefaultImpl;
-    g.PlatformIO.Platform_SetImeDataFn = Platform_SetImeDataFn_DefaultImpl;
+    InitializeDefaultPlatformHandlers(g.PlatformIO);
 
     // Setup session starting date
 #ifndef IMGUI_DISABLE_TIME_FUNCTIONS
@@ -13475,7 +13501,7 @@ bool ImGui::IsPopupOpenRequestForItem(ImGuiPopupFlags popup_flags, ImGuiID id)
 {
     ImGuiContext& g = *GImGui;
     ImGuiMouseButton mouse_button = GetMouseButtonFromPopupFlags(popup_flags);
-    if (IsMouseReleased(mouse_button) && IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+    if (IsMouseReleased(mouse_button, id) && IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
         return true;
     if (g.NavOpenContextMenuItemId == id && (IsItemFocused() || id == g.CurrentWindow->MoveId))
         return true;
@@ -13486,7 +13512,7 @@ bool ImGui::IsPopupOpenRequestForWindow(ImGuiPopupFlags popup_flags)
 {
     ImGuiContext& g = *GImGui;
     ImGuiMouseButton mouse_button = GetMouseButtonFromPopupFlags(popup_flags);
-    if (IsMouseReleased(mouse_button) && IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+    if (IsMouseReleased(mouse_button, ImGuiKeyOwner_NoOwner) && IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
         if (!(popup_flags & ImGuiPopupFlags_NoOpenOverItems) || !IsAnyItemHovered())
             return true;
     if (g.NavOpenContextMenuWindowId && g.CurrentWindow->ID)
@@ -13557,9 +13583,9 @@ bool ImGui::BeginPopupContextVoid(const char* str_id, ImGuiPopupFlags popup_flag
     ImGuiWindow* window = g.CurrentWindow;
     if (!str_id)
         str_id = "void_context";
-    ImGuiID id = window->GetID(str_id);
+    ImGuiID id = window->GetID(str_id); // FIXME: Use a global ID?
     ImGuiMouseButton mouse_button = GetMouseButtonFromPopupFlags(popup_flags);
-    if (IsMouseReleased(mouse_button) && !IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
+    if (IsMouseReleased(mouse_button, id) && !IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
         if (GetTopMostPopupModal() == NULL)
             OpenPopupEx(id, popup_flags);
     return BeginPopupEx(id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
@@ -14887,6 +14913,7 @@ void ImGui::NavInitRequestApplyResult()
         g.NavJustMovedToFocusScopeId = result->FocusScopeId;
         g.NavJustMovedToKeyMods = 0;
         g.NavJustMovedToIsTabbing = false;
+        g.NavJustMovedToIsInit = true;
         g.NavJustMovedToHasSelectionData = (result->ItemFlags & ImGuiItemFlags_HasSelectionUserData) != 0;
     }
 
@@ -15154,6 +15181,7 @@ void ImGui::NavMoveRequestApplyResult()
         g.NavJustMovedToFocusScopeId = result->FocusScopeId;
         g.NavJustMovedToKeyMods = g.NavMoveKeyMods;
         g.NavJustMovedToIsTabbing = (g.NavMoveFlags & ImGuiNavMoveFlags_IsTabbing) != 0;
+        g.NavJustMovedToIsInit = false;
         g.NavJustMovedToHasSelectionData = (result->ItemFlags & ImGuiItemFlags_HasSelectionUserData) != 0;
         //IMGUI_DEBUG_LOG_NAV("[nav] NavJustMovedFromFocusScopeId = 0x%08X, NavJustMovedToFocusScopeId = 0x%08X\n", g.NavJustMovedFromFocusScopeId, g.NavJustMovedToFocusScopeId);
     }
@@ -16080,17 +16108,9 @@ const ImGuiPayload* ImGui::AcceptDragDropPayload(const char* type, ImGuiDragDrop
     flags |= (g.DragDropSourceFlags & ImGuiDragDropFlags_AcceptNoDrawDefaultRect); // Source can also inhibit the preview (useful for external sources that live for 1 frame)
     const bool draw_target_rect = payload.Preview && !(flags & ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
     if (draw_target_rect && g.DragDropTargetFullViewport != 0)
-    {
-        ImGuiViewport* viewport = FindViewportByID(g.DragDropTargetFullViewport);
-        IM_ASSERT(viewport != NULL);
-        ImRect bb = g.DragDropTargetRect;
-        bb.Expand(-3.5f);
-        RenderDragDropTargetRectEx(GetForegroundDrawList(viewport), bb, g.Style.DragDropTargetRounding);
-    }
+        RenderDragDropTargetRectForViewport(g.DragDropTargetFullViewport, g.DragDropTargetRect);
     else if (draw_target_rect)
-    {
         RenderDragDropTargetRectForItem(r);
-    }
 
     g.DragDropAcceptFrameCount = g.FrameCount;
     if ((g.DragDropSourceFlags & ImGuiDragDropFlags_SourceExtern) && g.DragDropMouseButton == -1)
@@ -16119,6 +16139,16 @@ void ImGui::RenderDragDropTargetRectForItem(const ImRect& bb)
     RenderDragDropTargetRectEx(window->DrawList, bb_display, g.Style.DragDropTargetRounding);
     if (push_clip_rect)
         window->DrawList->PopClipRect();
+}
+
+void ImGui::RenderDragDropTargetRectForViewport(ImGuiID viewport_id, const ImRect& bb)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiViewport* viewport = FindViewportByID(viewport_id);
+    IM_ASSERT(viewport != NULL);
+    ImRect bb_padded = bb;
+    bb_padded.Expand(-g.Style.DragDropTargetPadding);
+    RenderDragDropTargetRectEx(GetForegroundDrawList(viewport), bb_padded, g.Style.DragDropTargetRounding);
 }
 
 void ImGui::RenderDragDropTargetRectEx(ImDrawList* draw_list, const ImRect& bb, float rounding)
@@ -16890,6 +16920,7 @@ void ImGuiPlatformIO::ClearPlatformHandlers()
     Platform_OnChangedViewport = NULL;
     Platform_GetWindowWorkAreaInsets = NULL;
     Platform_CreateVkSurface = NULL;
+    InitializeDefaultPlatformHandlers(*this); // Prevents losing the functionality provided by Platform_*_DefaultImpl on backend re-creation.
 }
 
 void ImGuiPlatformIO::ClearRendererHandlers()
@@ -16899,7 +16930,7 @@ void ImGuiPlatformIO::ClearRendererHandlers()
     Renderer_CreateWindow = Renderer_DestroyWindow = NULL;
     Renderer_SetWindowSize = NULL;
     Renderer_RenderWindow = Renderer_SwapBuffers = NULL;
-    DrawCallback_ResetRenderState = DrawCallback_SetSamplerLinear = DrawCallback_SetSamplerNearest = NULL;
+    DrawCallback_ResetRenderState = DrawCallback_SetSamplerLinear = DrawCallback_SetSamplerNearest = DrawCallback_SetSamplerFromTex = NULL;
 }
 
 ImGuiViewport* ImGui::GetMainViewport()
@@ -22166,6 +22197,15 @@ static void Platform_SetImeDataFn_DefaultImpl(ImGuiContext*, ImGuiViewport* view
 static void Platform_SetImeDataFn_DefaultImpl(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*) {}
 
 #endif // Default IME handlers
+
+// Setup default ImGuiPlatformIO clipboard/IME handlers
+static void InitializeDefaultPlatformHandlers(ImGuiPlatformIO& platform_io)
+{
+    platform_io.Platform_GetClipboardTextFn = Platform_GetClipboardTextFn_DefaultImpl;
+    platform_io.Platform_SetClipboardTextFn = Platform_SetClipboardTextFn_DefaultImpl;
+    platform_io.Platform_OpenInShellFn = Platform_OpenInShellFn_DefaultImpl;
+    platform_io.Platform_SetImeDataFn = Platform_SetImeDataFn_DefaultImpl;
+}
 
 //-----------------------------------------------------------------------------
 // [SECTION] METRICS/DEBUGGER WINDOW

@@ -42,9 +42,11 @@ HOW TO UPDATE?
 Breaking Changes:
 
 - Style: obsoleted `style.CurveTessellationTol (default 1.25)` which was in Pixels² unit in
-  favor of `style.CurveTesselationMaxError` (default 1.12)` which is in Pixels unit. It is
+  favor of `style.CurveTessellationMaxError` (default 1.12)` which is in Pixels unit. It is
   easier to tweak + this allows us to easily scale error threshold on high density screens.
-  - style.CurveTesselationMaxError == sqrf(style.CurveTessellationTol).
+  - style.CurveTessellationMaxError == sqrf(style.CurveTessellationTol).
+- ImGuiTextFilter: removed `float width` parameter of `Draw(const char* filter, float width)`:
+  prefer using `SetNextItemWidth(float)` which is standard. Kept inline redirection function.
 - Backends:
   - DirectX12: Removed support for legacy `ImGui_ImplDX12_Init()` signature, which was
     obsoleted in 1.91.6 (December 2014), because it needed to forcefully disable support
@@ -55,9 +57,19 @@ Other Changes:
 - Drags, Sliders:
   - Fixed an overflow using `ImGuiSliderFlags_Logarithmic` with S32/S64 types which
     leads to clamped interactions. (#9526, #3361, #1823, #1316, #642) [@lailoken]
+  - Ongoing drags may be cancelled using Right-Click, Escape or Gamepad Triangle.
+    Cancelling reverts to the initial value. (#8564, #9534)
 - TreeNode:
   - Fixed issues/asserts with 32+ deep trees when using ImGuiTreeNodeFlags_DrawLinesXXX
     features or other features requiring stack storage. (#9509) [@lasrod]
+- TabBar:
+  - Improved scroll target when clicking a Tab that is larger than the scrolling
+    section width.
+  - Using <> scrolling buttons while the selected Tab is at either end of the
+    section mid-section but not fully visible always makes it fully visible
+    (before eventually selecting a Tab in the leading/trailing section)
+- Selectable:
+  - Fixed `ImGuiSelectableFlags_SelectOnNav` triggering during NavInit.
 - Fonts:
   - Reworked `AddFontDefault()` to use `io.DisplayFrameBufferScale` as part of the heuristic
     to select `AddFontDefaultVector()` by default, effectively using ProggyForever instead of
@@ -67,7 +79,27 @@ Other Changes:
     disabled color buttons have the same color as non-disabled oness. (#9511)
   - ColorButton: fixed issues/inconsistencies with checkerboard rendering when combining
     color alpha and global style alpha. (#9511) [@enjmiah, @ocornut]
+- Popups:
+  - Amended context menu right-click opening code to check that the right-click
+    hasn't been owned by another items. This is more correct and also necessary
+    to avoid Drags/Sliders cancelling also triggering a cancel menu. (#8564, #9534)
+- ImGuiTextFilter:
+  - Added support for space as an "and" filter, which is the standard. (#2435, #30)
+     e.g. w/ filter 'hello world' (without quotes) both words needs to be in input data.
+  - Added support for double-quoted "xxx" blocks to e.g. match words sequences. (#2435)
+     e.g. w/ filter "hello world" the exact sequence needs to be in input data.
+  - Fixed filtering when mixing "include" and "-exclude" keyword so that an "-exclude"
+    match always filters out. (#2435) [@kudaba, @ocornut]
+  - Added `DrawWithHint()` function. (#6206, #6395, #6447)
+  - Added a "incl -excl" hint by default when the search field is empty. (#6206, #6395, #6447)
+- Style:
+  - Inverted `ImGuiCol_TitleBgXXX` colors for `StyleColorsLight()` so that the selected
+    window title bar appears brighter.
 - Misc:
+  - Added `ImGuiItemFlags_MixedValue` flag for representing mixed/indeterminate values.
+    Supported by: Checkbox(), RadioButton(), DragXXX(), SliderXXX(), InputXXX(), ColorXXX()
+    and Combo() functions.
+    The scoped flag is designed for usage by advanced property editors. (#5518, #5677, #6865)
   - Fixed `GetBackgroundDrawList()`/`GetForegroundDrawList()` not being properly reset
     every frame when cumulated session time is very large (e.g. a few days). [@lailoken]
   - Added `IM_NODEBUGSTEP` helper to tag functions with `__declspec(non_user_code)` (MSVC)
@@ -75,17 +107,37 @@ Other Changes:
     trivial functions when stepping into.
   - Tagged various trivial functions using `IM_NODEBUGSTEP`: `ImVec2()`, `ImVec4()` etc.
     and various operators.
-- ImDrawList:
+  - IO: restore default clipboard/ime/shell platform handlers on ClearPlatformHandlers(), fixing
+    issues switching backends mid-session to one relying on default. (#9537, #8945, #2769) [@lstalmir]
+- DrawList:
   - Per-viewport FramebufferScale for Apple/Retina screen is applied to draw lists:
     - AA Fringe is scaled accordingly.
     - Circle and Curves tessellation error are scaled accordingly.
   - Reworked assert in PushTexture() to allow convenience grace period of using a
     texture that was queue for destroy during the frame. Make it safe to stick to
     an existing texture during the frame. (#9528, #8465)
+  - Added optional `platform_io.DrawCallback_SetSamplerFromTex` standard backend-agnostic
+    draw callback for requesting to use the sampler associated already associated to a texture.
+    Currently only supported by the OpenGL2/3 and SDLRenderer3 backend. (#9378)
+- Demo:
+  - Added `Widgets->Mixed Values` section. (#5518, #5677, #6865)
+  - Style Editor: fixed style/colors combo box applying style when opening Combo.
 - Backends:
   - QNX: added QNX Screen backend. (#9492) [@mgorchak-blackberry]
+  - OpenGL2, OpenGL3: added support for `platform_io.DrawCallback_SetSamplerFromTex` draw
+    callback to request using the sampler associated already associated to a texture. (#9378)
+  - OpenGL2, OpenGL3: fixed `DrawCallback_ResetRenderState` handler not reseting all states
+    in the glTexParameter() path. (#9378)
   - SDL2: fixed querying framebuffer scale/density when using Metal without
     going through a SDL_Renderer. (#5592) [@lailoken]
+  - SDLRenderer3: restore any temporarily modified texture scale modes at the of `RenderDrawData()`. (#9378)
+  - SDLRenderer3: expose CurrentScaleMode in ImGui_ImplSDLRenderer3_RenderState. (#9543, #9378) [@Clownacy]
+  - SDLRenderer3: added support for `platform_io.DrawCallback_SetSamplerFromTex` draw callback to request
+    using the sampler associated already associated to a texture via `SDL_SetTextureScaleMode()`. (#9378)
+    It is equivalent to setting `render_state->CurrentScaleMode = SDL_SCALEMODE_INVALID`.
+    Note: this  callback is only supported by selected rendering backends: most other graphics API
+    don't have the equivalent of `SDL_SetTextureScaleMode()` and the callback won't work with them.
+  - Vulkan: added for support for multiple Vulkan contexts with custom loaders. (#6616) [@lstalmir]
   - WebGPU: fixed passing non-integer sizes to `wgpuRenderPassEncoderSetViewport()`
     when when `FramebufferScale` is >1.0f. (#9515, #8628) [@WayU]
   - WebGPU: update to build with wgpu-native 29.0+. (#9377, #9532, #9530) [@lucascompython, @ivan-enzhaev]
@@ -98,7 +150,13 @@ Other Changes:
 
 Docking+Viewports Branch:
 
+- Style:
+  - Changed `ImGuiCol_DockingEmptyBg` value for `StyleColorsLight()`.
 - Backends:
+  - DX10, DX11, DX12: fixed crash when CreateSwapChain() or CreateRenderTargetView()
+    calls are failing. (#9546)
+  - GLFW: fixed applying mouse cursor shapes to secondary viewports, broken in 1.92.6
+    when introducing a cache. (#9545) [@JamesWrigley]
   - Metal: fixed resizing windows losing framebuffer scale. (#6828, #8856) [@laikoken]
 - Examples:
   - SDL3+Metal, GLFW+Metal: fix multi-viewport support.
