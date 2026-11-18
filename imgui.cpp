@@ -1,4 +1,4 @@
-// dear imgui, v1.93.0 WIP
+// dear imgui, v1.93.1 WIP
 // (main code and documentation)
 
 // Help:
@@ -403,9 +403,64 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                           - likewise io.MousePos and GetMousePos() will use OS coordinates.
                             If you query mouse positions to interact with non-imgui coordinates you will need to offset them, e.g. subtract GetWindowViewport()->Pos.
 
+   2026/10/15 (1.93.1) - commented out legacy names/functions which were obsoleted from 1.90.7 (May 2024) to 1.91.1 (Sept 2024):
+                          - `ImGuiMod_Shortcut`                  --> `ImGuiMod_Ctrl` (since 1.90.7 it maps to Cmd on macOS)
+                          - `ImGuiCol_TabActive`                 --> `ImGuiCol_TabSelected`
+                          - `ImGuiCol_TabUnfocused`              --> `ImGuiCol_TabDimmed`
+                          - `ImGuiCol_TabUnfocusedActive`        --> `ImGuiCol_TabDimmedSelected`
+                          - `ImGuiSelectableFlags_DontClosePopups`-> `ImGuiSelectableFlags_NoAutoClosePopups`
+                          - `PushButtonRepeat(bool repeat)`      --> `PushItemFlag(ImGuiItemFlags_ButtonRepeat, repeat)`
+                          - `PopButtonRepeat()`                  --> `PopItemFlag()`
+                          - `PushTabStop(bool tab_stop)`         --> `PushItemFlag(ImGuiItemFlags_NoTabStop, !tab_stop);`
+                          - `PopTabStop()`                       --> `PopItemFlag()`
+                          - `io.GetClipboardTextFn`              --> `platform_io.Platform_GetClipboardTextFn`
+                          - `io.SetClipboardTextFn`              --> `platform_io.Platform_SetClipboardTextFn`
+                          - `io.ClipboardUserData`               --> `platform_io.Platform_ClipboardUserData`
+   2026/10/07 (1.93.0) - large cleanup/refactor of ImDrawList. many issues and inconsistencies fixed! (#9504)
+                         BELOW IS A SIMPLIFIED/SHORTENED RECAP OF CHANGES. READ CHANGELOG AND LINKS ABOVE FOR MORE DETAILS!
+                         useful links:
+                          - ImDrawList 1.92.9 <> 1.93 Interactive Testbed: https://www.dearimgui.com/docs/drawlist_v193 (<-- you can download this locally)
+                          - ImDrawList Wiki Reference:                     https://github.com/ocornut/imgui/wiki/Draw-List
+                          - Discussion thread:                             https://github.com/ocornut/imgui/issues/9504
+                       - use ImDrawFlags_StrokeLegacy mode to emulate old rendering:
+                          - Per-primitive:      draw_list->AddLine(..., ..., ImDrawFlags_StrokeLegacy);
+                          - For a given scope:  draw_list->PushDrawFlag(ImDrawFlags_StrokeLegacy, true); draw_list->AddLine(...); draw_list->PopDrawFlag();
+                          - Globally:           ImGui::Checkbox("DefaultsToStrokeLegacy", &io.ConfigDebugDrawListDefaultsToStrokeLegacy);  // Map to a checkbox
+                          - Globally:           io.ConfigDebugDrawListDefaultsToStrokeLegacy = io.KeyShift;                                // Map on Shift
+                       - AddLine: removed the (+0.5f,+0.5f) offset that was sneakily added to input coordinates by this function, and led to lots of inconsistencies.
+                          - This fixes inconsistencies in the API and matches the PathXXX API.
+                          - By default, stroke thickness extends on both side of the given segment. e.g for a "pixel-perfect" looking line with thickness=1.0f, coords should be passed as center of each ends of the line.
+                          - Use `ImDrawFlags_StrokeLegacy` to use old offset if required. Or you can apply the offset manually!
+                          - Generally better, simpler and faster to use `AddLineH()`, `AddLineV()` functions added in 1.92.8.
+                          - IF YOU ARE MINDFUL OF PIXEL-PERFECTNESS IN YOUR CUSTOM RENDERING/WIDGETS read Changelog and links above for details.
+                       - AddRect(), AddCircle(), AddNgon(), AddEllipse(), AddTriangle(), AddQuad(): defaulting to "inside" stroke. All closed shapes with thickness=1.0f will appear identical. The difference for thickness>1.0f shapes may be minimal since very large strokes were not well supported for widgets, but stroke will default inside widgets.
+                       - AddCircle(), AddNgon(): removed +0.5f offset added to radius. This fixes inconsistencies in the API. Use `ImDrawFlags_StrokeLegacy` to use old method if required. Or you can apply the offset manually!
+                       - AddRectFilled(): non-integer coordinates will now display anti-aliased edges. Previously, non-integer coordinates rendered with aliased edges snapped by the rasterizer.
+                       - AddRect(), AddRectFilled(): rectangles with inverted coordinates won't be visible unless using ImDrawFlags_StrokeLegacy mode.
+                         With inverted coordinates:
+                          - Legacy `AddRect()` rounding off         -> visible but incorrect outer size.
+                          - Legacy `AddRect()` rounding on          -> visible but very glitchy.
+                          - Legacy `AddRectFilled()` rounding off   -> visible and correct.
+                          - Legacy `AddRectFilled()` rounding on    -> visible but very glitchy.
+                       - merged ImDrawListFlags into ImDrawFlags. obsoleted ImDrawListFlags (which were rarely used directly):
+                          - ImDrawListFlags_AntiAliasedLines        -> ImDrawFlags_AALines,
+                          - ImDrawListFlags_AntiAliasedFill         -> ImDrawFlags_AAFill,
+                          - ImDrawListFlags_AllowVtxOffset          -> ImDrawFlags_UseVtxOffset,
+                          - ImDrawListFlags_TextNoPixelSnap         -> ImDrawFlags_TextNoPixelSnap,
+                         unifying them allows easily using them for both per-primitives alterations and scope alterations.
+                       - renamed ImDrawFlags_RoundCornersXXXX to ImDrawFlags_RoundXXXX.
+                          - ImDrawFlags_RoundCornersAll             -> ImDrawFlags_RoundAll,
+                          - ImDrawFlags_RoundCornersNone            -> ImDrawFlags_RoundNone,
+                          - ImDrawFlags_RoundCornersTopLeft         -> ImDrawFlags_RoundTopLeft,
+                          - ImDrawFlags_RoundCornersTopRight        -> ImDrawFlags_RoundTopRight,
+                          - ImDrawFlags_RoundCornersTop             -> ImDrawFlags_RoundTop,
+                          - ImDrawFlags_RoundCornersBottom          -> ImDrawFlags_RoundBottom,
+                         etc. kept redirection enums (will obsolete).
+                       - obsoleted style.AntiAliasedLinesUseTex and ImDrawListFlags_AntiAliasedLinesUseTex, as the new line rendering code always uses textures.
+ - 2026/09/30 (1.93.0) - ImFont: renamed `AddRemapChar()` to `AddRemapCodepoint()` (rarely used, marked internal). (#609, #5748)
  - 2026/09/18 (1.93.0) - ImGuiTextFilter: removed `float width` parameter of `Draw(const char* filter, float width)`: prefer using `SetNextItemWidth(float)` which is standard. Kept inline redirection function.
- - 2026/08/03 (1.93.0) - Style: obsoleted `style.CurveTessellationTol (default 1.25)` which was in Pixels² unit in favor of `style.CurveTessellationMaxError` (default 1.12)` which is in Pixels unit.
-                         - style.CurveTessellationMaxError == sqrf(style.CurveTessellationTol).
+ - 2026/08/03 (1.93.0) - Style: obsoleted `style.CurveTessellationTol` (default 1.25) which was in Pixels² unit in favor of `style.CurveTessellationMaxError` (default 1.12) which is in Pixels unit.
+                         - style.CurveTessellationMaxError == sqrtf(style.CurveTessellationTol).
  - 2026/07/20 (1.92.9) - DragXXX, SliderXXX, InputScalar: with `ImGuiItemFlags_LiveEditOnInputScalar` now defaulting to being disabled:
                          inputting a value with the keyboard doesn't write intermediate values to backing variable. (#9476)
                          - Before: DragFloat() with user typing "123" --> write back 1, then 12, then 123.
@@ -1604,10 +1659,14 @@ ImGuiStyle::ImGuiStyle()
     DockingSeparatorSize        = 2.0f;             // Thickness of resizing border between docked windows
     MouseCursorScale            = 1.0f;             // Scale software rendered mouse cursor (when io.MouseDrawCursor is enabled). May be removed later.
 
+    // Symbols
+    SymbolArrowSizeFactor       = ImVec2(0.72f,0.40f); // Width/height factor of arrows (0.0f..1.0f). Legacy arrows use (0.60f,0.70f)
+    SymbolArrowThicknessFactor  = 0.30f;            // Thickness factor of arrows (0.0f..0.5f). 0.0f=Fill. >0.0f=Stroke. Legacy arrows use 0.0f.
+
     // Rendering & Tessellation
-    AntiAliasedLines            = true;             // Enable anti-aliased lines/borders. Disable if you are really tight on CPU/GPU.
-    AntiAliasedLinesUseTex      = true;             // Enable anti-aliased lines/borders using textures where possible. Require backend to render with bilinear filtering (NOT point/nearest filtering).
-    AntiAliasedFill             = true;             // Enable anti-aliased filled shapes (rounded rectangles, circles, etc.).
+    AntiAliasedLines            = true;             // Enable anti-aliased lines/borders. Used at the beginning of the frame to set ImDrawFlags_AALines in all draw-lists.
+    AntiAliasedLineEnds         = false;            // Enable anti-aliased lines/borders ends. Nicer for thick lines but more expensive. Used at the beginning of the frame to set ImDrawFlags_AALineEnds in all draw-lists.
+    AntiAliasedFill             = true;             // Enable anti-aliased edges around filled shapes (rounded rectangles, circles, etc.). Used at the beginning of the frame to set ImDrawFlags_AAFill in all draw-lists.
     CurveTessellationMaxError   = 1.12f;            // Maximum error (in pixels) when using PathBezierCurveTo() without a specific number of segments. Decrease for highly tessellated curves (higher quality, more polygons), increase to reduce quality.
     CircleTessellationMaxError  = 0.30f;            // Maximum error (in pixels) allowed when using AddCircle()/AddCircleFilled() or drawing rounded corner rectangles with no explicit segment count specified. Decrease for higher quality but more geometry.
 
@@ -1623,6 +1682,7 @@ ImGuiStyle::ImGuiStyle()
     _NextFrameFontSizeBase      = 0.0f;
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     CurveTessellationTol        = 0.0f;             // Old CurveTessellationTol = CurveTessellationMaxError*CurveTessellationMaxError.
+    AntiAliasedLinesUseTex      = true;             // Enable anti-aliased lines/borders using textures for legacy strokes. Require backend to render with bilinear filtering (NOT point/nearest filtering).
 #endif
 
     // Default theme
@@ -1905,7 +1965,7 @@ void ImGuiIO::ClearInputMouse()
     MouseWheel = MouseWheelH = 0.0f;
 }
 
-static ImGuiInputEvent* FindLatestInputEvent(ImGuiContext* ctx, ImGuiInputEventType type, int arg = -1)
+ImGuiInputEvent* ImGui::FindLatestInputEvent(ImGuiContext* ctx, ImGuiInputEventType type, int arg)
 {
     ImGuiContext& g = *ctx;
     for (int n = g.InputEventsQueue.Size - 1; n >= 0; n--)
@@ -1950,7 +2010,7 @@ void ImGuiIO::AddKeyAnalogEvent(ImGuiKey key, bool down, float analog_value)
     }
 
     // Filter duplicate (in particular: key mods and gamepad analog values are commonly spammed)
-    const ImGuiInputEvent* latest_event = FindLatestInputEvent(&g, ImGuiInputEventType_Key, (int)key);
+    const ImGuiInputEvent* latest_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_Key, (int)key);
     const ImGuiKeyData* key_data = ImGui::GetKeyData(&g, key);
     const bool latest_key_down = latest_event ? latest_event->Key.Down : key_data->Down;
     const float latest_key_analog = latest_event ? latest_event->Key.AnalogValue : key_data->AnalogValue;
@@ -2008,7 +2068,7 @@ void ImGuiIO::AddMousePosEvent(float x, float y)
     ImVec2 pos((x > -FLT_MAX) ? ImFloor(x) : x, (y > -FLT_MAX) ? ImFloor(y) : y);
 
     // Filter duplicate
-    const ImGuiInputEvent* latest_event = FindLatestInputEvent(&g, ImGuiInputEventType_MousePos);
+    const ImGuiInputEvent* latest_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_MousePos);
     const ImVec2 latest_pos = latest_event ? ImVec2(latest_event->MousePos.PosX, latest_event->MousePos.PosY) : g.IO.MousePos;
     if (latest_pos.x == pos.x && latest_pos.y == pos.y)
         return;
@@ -2041,7 +2101,7 @@ void ImGuiIO::AddMouseButtonEvent(int mouse_button, bool down)
     }
 
     // Filter duplicate
-    const ImGuiInputEvent* latest_event = FindLatestInputEvent(&g, ImGuiInputEventType_MouseButton, (int)mouse_button);
+    const ImGuiInputEvent* latest_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_MouseButton, (int)mouse_button);
     const bool latest_button_down = latest_event ? latest_event->MouseButton.Down : g.IO.MouseDown[mouse_button];
     if (latest_button_down == down)
         return;
@@ -2051,7 +2111,7 @@ void ImGuiIO::AddMouseButtonEvent(int mouse_button, bool down)
     // - At this point we want from !down to down, so this is handling the initial press.
     if (ConfigMacOSXBehaviors && mouse_button == 0 && down)
     {
-        const ImGuiInputEvent* latest_super_event = FindLatestInputEvent(&g, ImGuiInputEventType_Key, (int)ImGuiMod_Super);
+        const ImGuiInputEvent* latest_super_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_Key, (int)ImGuiMod_Super);
         if (latest_super_event ? latest_super_event->Key.Down : g.IO.KeySuper)
         {
             IMGUI_DEBUG_LOG_IO("[io] Super+Left Click aliased into Right Click\n");
@@ -2109,7 +2169,7 @@ void ImGuiIO::AddMouseViewportEvent(ImGuiID viewport_id)
         return;
 
     // Filter duplicate
-    const ImGuiInputEvent* latest_event = FindLatestInputEvent(&g, ImGuiInputEventType_MouseViewport);
+    const ImGuiInputEvent* latest_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_MouseViewport);
     const ImGuiID latest_viewport_id = latest_event ? latest_event->MouseViewport.HoveredViewportID : g.IO.MouseHoveredViewport;
     if (latest_viewport_id == viewport_id)
         return;
@@ -2127,7 +2187,7 @@ void ImGuiIO::AddFocusEvent(bool focused)
     ImGuiContext& g = *Ctx;
 
     // Filter duplicate
-    const ImGuiInputEvent* latest_event = FindLatestInputEvent(&g, ImGuiInputEventType_Focus);
+    const ImGuiInputEvent* latest_event = ImGui::FindLatestInputEvent(&g, ImGuiInputEventType_Focus);
     const bool latest_focused = latest_event ? latest_event->AppFocused.Focused : !g.IO.AppFocusLost;
     if (latest_focused == focused || (ConfigDebugIgnoreFocusLoss && !focused))
         return;
@@ -2275,14 +2335,14 @@ ImVec2 ImTriangleClosestPoint(const ImVec2& a, const ImVec2& b, const ImVec2& c,
 int ImStricmp(const char* str1, const char* str2)
 {
     int d;
-    while ((d = ImToUpper(*str2) - ImToUpper(*str1)) == 0 && *str1) { str1++; str2++; }
+    while ((d = ImToUpper(*str1) - ImToUpper(*str2)) == 0 && *str1) { str1++; str2++; }
     return d;
 }
 
 int ImStrnicmp(const char* str1, const char* str2, size_t count)
 {
     int d = 0;
-    while (count > 0 && (d = ImToUpper(*str2) - ImToUpper(*str1)) == 0 && *str1) { str1++; str2++; count--; }
+    while (count > 0 && (d = ImToUpper(*str1) - ImToUpper(*str2)) == 0 && *str1) { str1++; str2++; count--; }
     return d;
 }
 
@@ -2559,7 +2619,13 @@ ImGuiID ImHashData(const void* data_p, size_t data_size, ImGuiID seed)
 #else
     while (data + 4 <= data_end)
     {
+#if defined(_DEBUG) || defined(_MSC_VER)
         crc = _mm_crc32_u32(crc, *(ImU32*)data);
+#else
+        ImU32 v;
+        memcpy(&v, data, sizeof(ImU32)); // Avoid aliasing violation (#9557)
+        crc = _mm_crc32_u32(crc, v); 
+#endif
         data += 4;
     }
     while (data < data_end)
@@ -4015,13 +4081,12 @@ void ImGui::RenderText(ImVec2 pos, const char* text, const char* text_end, bool 
             text_end = text + ImStrlen(text); // FIXME-OPT (not reached by our internal calls)
         text_display_end = text_end;
     }
+    if (text == text_display_end)
+        return;
 
-    if (text != text_display_end)
-    {
-        window->DrawList->AddText(g.Font, g.FontSize, pos, GetColorU32(ImGuiCol_Text), text, text_display_end);
-        if (g.LogEnabled)
-            LogRenderedText(&pos, text, text_display_end);
-    }
+    window->DrawList->AddText(g.Font, g.FontSize, pos, GetColorU32(ImGuiCol_Text), text, text_display_end);
+    if (g.LogEnabled)
+        LogRenderedText(&pos, text, text_display_end);
 }
 
 void ImGui::RenderTextWrapped(ImVec2 pos, const char* text, const char* text_end, float wrap_width)
@@ -4031,13 +4096,12 @@ void ImGui::RenderTextWrapped(ImVec2 pos, const char* text, const char* text_end
 
     if (!text_end)
         text_end = text + ImStrlen(text); // FIXME-OPT (not reached by our internal calls)
+    if (text == text_end)
+        return;
 
-    if (text != text_end)
-    {
-        window->DrawList->AddText(g.Font, g.FontSize, pos, GetColorU32(ImGuiCol_Text), text, text_end, wrap_width);
-        if (g.LogEnabled)
-            LogRenderedText(&pos, text, text_end);
-    }
+    window->DrawList->AddText(g.Font, g.FontSize, pos, GetColorU32(ImGuiCol_Text), text, text_end, wrap_width);
+    if (g.LogEnabled)
+        LogRenderedText(&pos, text, text_end);
 }
 
 // Default clip_rect uses (pos_min,pos_max)
@@ -4045,12 +4109,15 @@ void ImGui::RenderTextWrapped(ImVec2 pos, const char* text, const char* text_end
 // FIXME-OPT: Since we have or calculate text_size we could coarse clip whole block immediately, especially for text above draw_list->DrawList.
 // Effectively as this is called from widget doing their own coarse clipping it's not very valuable presently. Next time function will take
 // better advantage of the render function taking size into account for coarse clipping.
-void ImGui::RenderTextClippedEx(ImDrawList* draw_list, const ImVec2& pos_min, const ImVec2& pos_max, const char* text, const char* text_display_end, const ImVec2* text_size_if_known, const ImVec2& align, const ImRect* clip_rect)
 // DOES NOT CALL LogRenderedText(), unlike RenderTextClipped!!!
+void ImGui::RenderTextClippedEx(ImDrawList* draw_list, const ImVec2& pos_min, const ImVec2& pos_max, const char* text, const char* text_end, const ImVec2* text_size_if_known, const ImVec2& align, const ImRect* clip_rect)
 {
+    if (text == text_end)
+        return;
+
     // Perform CPU side clipping for single clipped element to avoid using scissor state
     ImVec2 pos = pos_min;
-    const ImVec2 text_size = text_size_if_known ? *text_size_if_known : CalcTextSize(text, text_display_end, false, 0.0f);
+    const ImVec2 text_size = text_size_if_known ? *text_size_if_known : CalcTextSize(text, text_end, false, 0.0f);
 
     const ImVec2* clip_min = clip_rect ? &clip_rect->Min : &pos_min;
     const ImVec2* clip_max = clip_rect ? &clip_rect->Max : &pos_max;
@@ -4059,18 +4126,20 @@ void ImGui::RenderTextClippedEx(ImDrawList* draw_list, const ImVec2& pos_min, co
         need_clipping |= (pos.x < clip_min->x) || (pos.y < clip_min->y);
 
     // Align whole block. We should defer that to the better rendering function when we'll have support for individual line alignment.
-    if (align.x > 0.0f) pos.x = ImMax(pos.x, pos.x + (pos_max.x - pos.x - text_size.x) * align.x);
-    if (align.y > 0.0f) pos.y = ImMax(pos.y, pos.y + (pos_max.y - pos.y - text_size.y) * align.y);
+    if (align.x > 0.0f)
+        pos.x = ImMax(pos.x, pos.x + (pos_max.x - pos.x - text_size.x) * align.x);
+    if (align.y > 0.0f)
+        pos.y = ImMax(pos.y, pos.y + (pos_max.y - pos.y - text_size.y) * align.y);
 
     // Render
     if (need_clipping)
     {
         ImVec4 fine_clip_rect(clip_min->x, clip_min->y, clip_max->x, clip_max->y);
-        draw_list->AddText(NULL, 0.0f, pos, GetColorU32(ImGuiCol_Text), text, text_display_end, 0.0f, &fine_clip_rect);
+        draw_list->AddText(NULL, 0.0f, pos, GetColorU32(ImGuiCol_Text), text, text_end, 0.0f, &fine_clip_rect);
     }
     else
     {
-        draw_list->AddText(NULL, 0.0f, pos, GetColorU32(ImGuiCol_Text), text, text_display_end, 0.0f, NULL);
+        draw_list->AddText(NULL, 0.0f, pos, GetColorU32(ImGuiCol_Text), text, text_end, 0.0f, NULL);
     }
 }
 
@@ -4313,11 +4382,12 @@ static const ImGuiLocEntry GLocalizationEntriesEnUS[] =
     { ImGuiLocKey_VersionStr,           "Dear ImGui " IMGUI_VERSION " (" IM_STRINGIFY(IMGUI_VERSION_NUM) ")" },
     { ImGuiLocKey_TableSizeOne,         "Size column to fit###SizeOne"          },
     { ImGuiLocKey_TableSizeAllFit,      "Size all columns to fit###SizeAll"     },
-    { ImGuiLocKey_TableSizeAllDefault,  "Size all columns to default###SizeAll" },
+    { ImGuiLocKey_TableSizeAllDefault,  "Size all columns to auto###SizeAll"    },
     { ImGuiLocKey_TableReset,           "Reset"                                 },
   //{ ImGuiLocKey_TableResetAll,        "Reset to default###ResetAll"           },
     { ImGuiLocKey_TableResetOrder,      "Reset order###ResetOrder"              },
     { ImGuiLocKey_TableResetVisibility, "Reset visibility###ResetVisibility"    },
+    { ImGuiLocKey_TableResetSizing,     "Reset sizing###ResetSizing"            },
     { ImGuiLocKey_WindowingMainMenuBar, "(Main menu bar)"                       },
     { ImGuiLocKey_WindowingPopup,       "(Popup)"                               },
     { ImGuiLocKey_WindowingUntitled,    "(Untitled)"                            },
@@ -4781,12 +4851,13 @@ void ImGui::RemoveContextHook(ImGuiContext* ctx, ImGuiID hook_id)
 
 // Call context hooks (used by e.g. test engine)
 // We assume a small number of hooks so all stored in same array
+// Iterate by index: a callback may add a hook, which reallocates the array. Hooks added here are called from the next call.
 void ImGui::CallContextHooks(ImGuiContext* ctx, ImGuiContextHookType hook_type)
 {
     ImGuiContext& g = *ctx;
-    for (ImGuiContextHook& hook : g.Hooks)
-        if (hook.Type == hook_type)
-            hook.Callback(&g, &hook);
+    for (int n = 0, hooks_count = g.Hooks.Size; n < hooks_count; n++)
+        if (g.Hooks[n].Type == hook_type)
+            g.Hooks[n].Callback(&g, &g.Hooks[n]);
 }
 
 //-----------------------------------------------------------------------------
@@ -5798,15 +5869,21 @@ static void SetupDrawListSharedData()
     g.DrawListSharedData.ClipRectFullscreen = virtual_space.ToVec4();
     g.DrawListSharedData.CurveTessellationMaxError = g.Style.CurveTessellationMaxError;
     g.DrawListSharedData.SetCircleTessellationMaxError(g.Style.CircleTessellationMaxError);
-    g.DrawListSharedData.InitialFlags = ImDrawListFlags_None;
-    if (g.Style.AntiAliasedLines)
-        g.DrawListSharedData.InitialFlags |= ImDrawListFlags_AntiAliasedLines;
-    if (g.Style.AntiAliasedLinesUseTex && !(g.IO.Fonts->Flags & ImFontAtlasFlags_NoBakedLines))
-        g.DrawListSharedData.InitialFlags |= ImDrawListFlags_AntiAliasedLinesUseTex;
+    g.DrawListSharedData.InitialDrawFlags = ImDrawFlags_None;
+    if (g.IO.Fonts->Flags & ImFontAtlasFlags_NoBakedLines)
+        g.Style.AntiAliasedLines = g.Style.AntiAliasedLineEnds = false;
     if (g.Style.AntiAliasedFill)
-        g.DrawListSharedData.InitialFlags |= ImDrawListFlags_AntiAliasedFill;
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_AAFill;
+    if (g.Style.AntiAliasedLines)
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_AALines;
+    if (g.Style.AntiAliasedLineEnds)
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_AALineEnds;
+    if (g.IO.ConfigDebugDrawListDefaultsToStrokeLegacy)
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_StrokeLegacy;
+    if (!(g.IO.Fonts->Flags & ImFontAtlasFlags_NoBakedRoundCorners))
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_UseTexForRoundCorners | ImDrawFlags_AllowTexForRoundCorners_;
     if (g.IO.BackendFlags & ImGuiBackendFlags_RendererHasVtxOffset)
-        g.DrawListSharedData.InitialFlags |= ImDrawListFlags_AllowVtxOffset;
+        g.DrawListSharedData.InitialDrawFlags |= ImDrawFlags_UseVtxOffset;
 }
 
 void ImGui::NewFrame()
@@ -6261,7 +6338,8 @@ static void ImGui::RenderDimmedBackgroundBehindWindow(ImGuiWindow* window, ImU32
         draw_list->PushClipRect(viewport_rect.Min - ImVec2(1, 1), viewport_rect.Max + ImVec2(1, 1), false); // FIXME: Need to strictly ensure ImDrawCmd are not merged (ElemCount==6 checks below will verify that)
         ImDrawCmd cmd = draw_list->CmdBuffer.back();
         IM_ASSERT(cmd.ElemCount == 0);
-        draw_list->AddRectFilled(viewport_rect.Min, viewport_rect.Max, col);
+        draw_list->PrimReserve(6, 4);
+        draw_list->PrimRect(viewport_rect.Min, viewport_rect.Max, col);
         cmd = draw_list->CmdBuffer.back();
         draw_list->CmdBuffer.pop_back();
         draw_list->CmdBuffer.push_front(cmd);
@@ -7616,7 +7694,7 @@ static void ImGui::RenderWindowOuterBorders(ImGuiWindow* window)
     if (g.Style.FrameBorderSize > 0 && !(window->Flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
     {
         float y = window->Pos.y + window->TitleBarHeight - 1;
-        window->DrawList->AddLineH(window->Pos.x + border_size * 0.5f, window->Pos.x + window->Size.x - border_size * 0.5f, y, border_col, g.Style.FrameBorderSize);
+        window->DrawList->AddLineH(window->Pos.x + border_size, window->Pos.x + window->Size.x - border_size, y, border_col, g.Style.FrameBorderSize, ImDrawFlags_StrokeCenterBiased);
     }
 }
 
@@ -7696,7 +7774,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
                 if (window->DockIsActive)
                     bg_rounding_flags = CalcRoundingFlagsForRectInRect(bg_rect, window->DockNode->HostWindow->Rect(), 0.0f);
                 else
-                    bg_rounding_flags = (flags & ImGuiWindowFlags_NoTitleBar) ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersBottom;
+                    bg_rounding_flags = (flags & ImGuiWindowFlags_NoTitleBar) ? ImDrawFlags_RoundAll : ImDrawFlags_RoundBottom;
                 ImDrawList* bg_draw_list = window->DockIsActive ? window->DockNode->HostWindow->DrawList : window->DrawList;
                 if (window->DockIsActive)
                     bg_draw_list->ChannelsSetCurrent(DOCKING_HOST_DRAW_CHANNEL_BG);
@@ -7716,7 +7794,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             ImU32 title_bar_col = GetColorU32(title_bar_is_highlight ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
             if (window->ViewportOwned)
                 title_bar_col |= IM_COL32_A_MASK; // No alpha
-            window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundCornersTop);
+            window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundTop);
         }
 
         // Menu bar
@@ -7724,9 +7802,9 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         {
             ImRect menu_bar_rect = window->MenuBarRect();
             menu_bar_rect.ClipWith(window->Rect());  // Soft clipping, in particular child window don't have minimum size covering the menu bar so this is useful for them.
-            window->DrawList->AddRectFilled(menu_bar_rect.Min, menu_bar_rect.Max, GetColorU32(ImGuiCol_MenuBarBg), (flags & ImGuiWindowFlags_NoTitleBar) ? window_rounding : 0.0f, ImDrawFlags_RoundCornersTop);
+            window->DrawList->AddRectFilled(menu_bar_rect.Min, menu_bar_rect.Max, GetColorU32(ImGuiCol_MenuBarBg), (flags & ImGuiWindowFlags_NoTitleBar) ? window_rounding : 0.0f, ImDrawFlags_RoundTop);
             if (style.FrameBorderSize > 0.0f && menu_bar_rect.Max.y < window->Pos.y + window->Size.y)
-                window->DrawList->AddLineH(menu_bar_rect.Min.x + window_border_size * 0.5f, menu_bar_rect.Max.x - window_border_size * 0.5f, menu_bar_rect.Max.y, GetColorU32(ImGuiCol_Border), style.FrameBorderSize);
+                window->DrawList->AddLineH(menu_bar_rect.Min.x + window_border_size, menu_bar_rect.Max.x - window_border_size, menu_bar_rect.Max.y, GetColorU32(ImGuiCol_Border), style.FrameBorderSize, ImDrawFlags_StrokeCenterBiased);
         }
 
         // Docking: Unhide tab bar (small triangle in the corner), drag from small triangle to quickly undock
@@ -8366,9 +8444,13 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
                 window->Pos = parent_window->DC.CursorPos;
         }
 
-        const bool window_pos_with_pivot = (window->SetWindowPosVal.x != FLT_MAX && window->HiddenFramesCannotSkipItems == 0);
-        if (window_pos_with_pivot)
+        if (window->SetWindowPosVal.x != FLT_MAX)
+        {
+            const ImVec2 backup_pos_val = window->SetWindowPosVal;
             SetWindowPos(window, window->SetWindowPosVal - window->Size * window->SetWindowPosPivot, 0); // Position given a pivot (e.g. for centering)
+            if (window->HiddenFramesCannotSkipItems != 0)
+                window->SetWindowPosVal = backup_pos_val; // Restore set request while hidden, so an updated size will be accounted for. (#9568)
+        }
         else if ((flags & ImGuiWindowFlags_ChildMenu) != 0)
             window->Pos = FindBestWindowPosForPopup(window);
         else if ((flags & ImGuiWindowFlags_Popup) != 0 && !window_pos_set_by_api && window_just_appearing_after_hidden_for_resize)
@@ -11770,6 +11852,15 @@ static void ImGui::ErrorCheckNewFrameSanityChecks()
     // #define IM_ASSERT(EXPR)   do { if (SomeCode(EXPR)) SomeMoreCode(); } while (0)   // Correct!
     if (true) IM_ASSERT(1); else IM_ASSERT(0);
 
+    // Check user IM_VEC2_CLASS_EXTRA macro
+    // (IF YOU GET A "ambiguous overload" COMPILE ERROR HERE: does your IM_VEC2_CLASS_EXTRA macro contains an operator=?
+    //    e.g. ImVec2& operator=(const MyPoint & p) { x = p.x; y = p.y; return *this; }
+    //  You should be able to remove it if you have the corresponding constructor:
+    //    e.g. IM_NODEBUGSTEP constexpr inline ImVec2(const MyPoint& f) : x(f.x), y(f.y) {}
+    //  Allowing you to add this extra operator to ImVec2 would prevent our whole codebase from using v = {x,y} assignment style.
+    //  PLEASE GET IN TOUCH IF REMOVING THE operator= IS A PROBLEM TO YOU)
+    ImVec2 v; v = { 1.0f, 2.0f };
+
     // Emscripten backends are often imprecise in their submission of DeltaTime. (#6114, #3644)
     // Ideally the Emscripten app/backend should aim to fix or smooth this value and avoid feeding zero, but we tolerate it.
 #ifdef __EMSCRIPTEN__
@@ -11802,6 +11893,14 @@ static void ImGui::ErrorCheckNewFrameSanityChecks()
     if (g.IO.ConfigErrorRecovery)
         IM_ASSERT(g.IO.ConfigErrorRecoveryEnableAssert || g.IO.ConfigErrorRecoveryEnableDebugLog || g.IO.ConfigErrorRecoveryEnableTooltip || g.ErrorCallback != NULL);
 
+    // Detect if the parameters leading AddFontDefault() to implicitly select either AddFontDefaultBitmap() or AddFontDefaultVector() have changed.
+    if (g.FrameCount == 2 && g.IO.Fonts->Builder->LoadedFontDefaultAsVector != -1)
+    {
+        const bool old_heuristic_result_for_using_vector_font = (bool)g.IO.Fonts->Builder->LoadedFontDefaultAsVector;
+        const bool new_heuristic_result_for_using_vector_font = ImFontAtlasHeuristicShouldUseDefaultVectorFont(g.IO.Fonts);
+        IM_ASSERT_USER_ERROR(old_heuristic_result_for_using_vector_font == new_heuristic_result_for_using_vector_font, "AddFontDefault() font selection heuristic parameters changed between load/init time and now. Verify which parameters have changed or load a default font explicitly!");
+    }
+
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     if (g.IO.FontGlobalScale > 1.0f)
         IM_ASSERT(g.Style.FontScaleMain == 1.0f && "Since 1.92: use style.FontScaleMain instead of g.IO.FontGlobalScale!");
@@ -11829,10 +11928,10 @@ static void ImGui::ErrorCheckNewFrameSanityChecks()
     }
 
     // Remap legacy clipboard handlers (OBSOLETED in 1.91.1, August 2024)
-    if (g.IO.GetClipboardTextFn != NULL && (g.PlatformIO.Platform_GetClipboardTextFn == NULL || g.PlatformIO.Platform_GetClipboardTextFn == Platform_GetClipboardTextFn_DefaultImpl))
-        g.PlatformIO.Platform_GetClipboardTextFn = [](ImGuiContext* ctx) { return ctx->IO.GetClipboardTextFn(ctx->IO.ClipboardUserData); };
-    if (g.IO.SetClipboardTextFn != NULL && (g.PlatformIO.Platform_SetClipboardTextFn == NULL || g.PlatformIO.Platform_SetClipboardTextFn == Platform_SetClipboardTextFn_DefaultImpl))
-        g.PlatformIO.Platform_SetClipboardTextFn = [](ImGuiContext* ctx, const char* text) { return ctx->IO.SetClipboardTextFn(ctx->IO.ClipboardUserData, text); };
+    //if (g.IO.GetClipboardTextFn != NULL && (g.PlatformIO.Platform_GetClipboardTextFn == NULL || g.PlatformIO.Platform_GetClipboardTextFn == Platform_GetClipboardTextFn_DefaultImpl))
+    //    g.PlatformIO.Platform_GetClipboardTextFn = [](ImGuiContext* ctx) { return ctx->IO.GetClipboardTextFn(ctx->IO.ClipboardUserData); };
+    //if (g.IO.SetClipboardTextFn != NULL && (g.PlatformIO.Platform_SetClipboardTextFn == NULL || g.PlatformIO.Platform_SetClipboardTextFn == Platform_SetClipboardTextFn_DefaultImpl))
+    //    g.PlatformIO.Platform_SetClipboardTextFn = [](ImGuiContext* ctx, const char* text) { return ctx->IO.SetClipboardTextFn(ctx->IO.ClipboardUserData, text); };
 
     // Remap legacy CurveTessellationTol into CurveTessellationMaxError (OBSOLETED in 1.93.0, August 2026)
     if (g.Style.CurveTessellationTol != 0.0f)
@@ -17418,6 +17517,8 @@ ImGuiViewportP* ImGui::AddUpdateViewport(ImGuiWindow* window, ImGuiID id, const 
         const bool window_can_use_inputs = ((window->Flags & ImGuiWindowFlags_NoMouseInputs) && (window->Flags & ImGuiWindowFlags_NoNavInputs)) == false;
         if (g.MovingWindow && g.MovingWindow->RootWindowDockTree == window)
             flags |= ImGuiViewportFlags_NoInputs | ImGuiViewportFlags_NoFocusOnAppearing;
+        else if (window->Flags & ImGuiWindowFlags_Modal)
+            flags &= ~ImGuiViewportFlags_NoFocusOnAppearing;
         if (!window_can_use_inputs)
             flags |= ImGuiViewportFlags_NoInputs;
         if (window->Flags & ImGuiWindowFlags_NoFocusOnAppearing)
@@ -19788,7 +19889,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
             if (is_focused || root_node->VisibleWindow == NULL)
                 root_node->VisibleWindow = node->VisibleWindow;
             if (node->TabBar)
-                node->TabBar->VisibleTabId = node->VisibleWindow->TabId;
+                node->TabBar->VisibleTabContentsId = node->VisibleWindow->TabId;
         }
         return;
     }
@@ -19937,7 +20038,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
         TabItemEx(tab_bar, window->Name, window->HasCloseButton ? &tab_open : NULL, tab_item_flags, window);
         if (!tab_open)
             node->WantCloseTabId = window->TabId;
-        if (tab_bar->VisibleTabId == window->TabId)
+        if (tab_bar->VisibleTabContentsId == window->TabId)
             node->VisibleWindow = window;
 
         // Store last item data so it can be queried with IsItemXXX functions after the user Begin() call
@@ -22453,7 +22554,7 @@ static const char* FormatTextureRefForDebugDisplay(char* buf, int buf_size, ImTe
     char* buf_end = buf + buf_size;
     if (tex_ref._TexData != NULL)
         buf_p += ImFormatString(buf_p, buf_end - buf_p, "#%03d: ", tex_ref._TexData->UniqueID);
-    ImFormatString(buf_p, buf_end - buf_p, "0x%X", ImGui::DebugTextureIDToU64(tex_ref.GetTexID()));
+    ImFormatString(buf_p, buf_end - buf_p, "0x%" IM_PRIX64, ImGui::DebugTextureIDToU64(tex_ref.GetTexID()));
     return buf;
 }
 
@@ -22505,6 +22606,7 @@ void ImGui::ShowFontAtlas(ImFontAtlas* atlas)
     if (TreeNode("Loader", "Loader: \'%s\'", atlas->FontLoaderName ? atlas->FontLoaderName : "NULL"))
     {
         const ImFontLoader* loader_current = atlas->FontLoader;
+        IM_UNUSED(loader_current);
         BeginDisabled(!atlas->RendererHasTextures);
 #ifdef IMGUI_ENABLE_STB_TRUETYPE
         const ImFontLoader* loader_stbtruetype = ImFontAtlasGetFontLoaderForStbTruetype();
@@ -23607,10 +23709,9 @@ void ImGui::DebugNodeDrawList(ImGuiWindow* window, ImGuiViewportP* viewport, con
                 Selectable(buf, false);
                 if (fg_draw_list && IsItemHovered())
                 {
-                    ImDrawListFlags backup_flags = fg_draw_list->Flags;
-                    fg_draw_list->Flags &= ~ImDrawListFlags_AntiAliasedLines; // Disable AA on triangle outlines is more readable for very large and thin triangles.
+                    fg_draw_list->PushDrawFlag(ImDrawFlags_AALines, false); // Disable AA on triangle outlines is more readable for very large and thin triangles.
                     fg_draw_list->AddPolyline(triangle, 3, IM_COL32(255, 255, 0, 255), 1.0f, ImDrawFlags_Closed);
-                    fg_draw_list->Flags = backup_flags;
+                    fg_draw_list->PopDrawFlag();
                 }
             }
         TreePop();
@@ -23626,8 +23727,7 @@ void ImGui::DebugNodeDrawCmdShowMeshAndBoundingBox(ImDrawList* out_draw_list, co
     // Draw wire-frame version of all triangles
     ImRect clip_rect = draw_cmd->ClipRect;
     ImRect vtxs_rect(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
-    ImDrawListFlags backup_flags = out_draw_list->Flags;
-    out_draw_list->Flags &= ~ImDrawListFlags_AntiAliasedLines; // Disable AA on triangle outlines is more readable for very large and thin triangles.
+    out_draw_list->PushDrawFlag(ImDrawFlags_AALines, false); // Disable AA on triangle outlines is more readable for very large and thin triangles.
     for (unsigned int idx_n = draw_cmd->IdxOffset, idx_end = draw_cmd->IdxOffset + draw_cmd->ElemCount; idx_n < idx_end; )
     {
         ImDrawIdx* idx_buffer = (draw_list->IdxBuffer.Size > 0) ? draw_list->IdxBuffer.Data : NULL; // We don't hold on those pointers past iterations as ->AddPolyline() may invalidate them if out_draw_list==draw_list
@@ -23645,7 +23745,7 @@ void ImGui::DebugNodeDrawCmdShowMeshAndBoundingBox(ImDrawList* out_draw_list, co
         out_draw_list->AddRect(ImTrunc(clip_rect.Min), ImTrunc(clip_rect.Max), IM_COL32(255, 0, 255, 255)); // In pink: clipping rectangle submitted to GPU
         out_draw_list->AddRect(ImTrunc(vtxs_rect.Min), ImTrunc(vtxs_rect.Max), IM_COL32(0, 255, 255, 255)); // In cyan: bounding box of triangles
     }
-    out_draw_list->Flags = backup_flags;
+    out_draw_list->PopDrawFlag();
 }
 
 // [DEBUG] Compute mask of inputs with the same codepoint.
@@ -23655,7 +23755,8 @@ static int CalcFontGlyphSrcOverlapMask(ImFontAtlas* atlas, ImFont* font, unsigne
     for (int src_n = 0; src_n < font->Sources.Size; src_n++)
     {
         ImFontConfig* src = font->Sources[src_n];
-        if (!(src->FontLoader ? src->FontLoader : atlas->FontLoader)->FontSrcContainsGlyph(atlas, src, (ImWchar)codepoint))
+        const ImFontLoader* loader = src->FontLoader ? src->FontLoader : atlas->FontLoader;
+        if (loader->FontSrcGetGlyphIndexFromCodepoint(atlas, src, (ImWchar)codepoint) == 0)
             continue;
         mask |= (1 << src_n);
         count++;
@@ -24294,9 +24395,9 @@ void ImGui::DebugDrawLineExtents(ImU32 col)
     float curr_x = window->DC.CursorPos.x;
     float line_y1 = (window->DC.IsSameLine ? window->DC.CursorPosPrevLine.y : window->DC.CursorPos.y);
     float line_y2 = line_y1 + (window->DC.IsSameLine ? window->DC.PrevLineSize.y : window->DC.CurrLineSize.y);
-    window->DrawList->AddLineH(curr_x - 5.0f, curr_x + 5.0f, line_y1, col, 1.0f);
-    window->DrawList->AddLineV(curr_x - 0.5f, line_y1, line_y2, col, 1.0f);
-    window->DrawList->AddLineH(curr_x - 5.0f, curr_x + 5.0f, line_y2, col, 1.0f);
+    window->DrawList->AddLineH(curr_x - 4.0f, curr_x + 5.0f, line_y1, col, 1.0f);
+    window->DrawList->AddLineV(curr_x, line_y1, line_y2, col, 1.0f);
+    window->DrawList->AddLineH(curr_x - 4.0f, curr_x + 5.0f, line_y2, col, 1.0f);
 }
 
 // Draw last item rect in ForegroundDrawList (so it is always visible)
